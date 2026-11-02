@@ -1,0 +1,29 @@
+{
+  "description": "nmemo: record every turn (prompts, replies, tool calls, results, file contents) into ~/.nmemo",
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/nmemo\" hook", "timeout": 30}]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/nmemo\" hook", "timeout": 10}]}
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/nmemo\" hook", "timeout": 20}]
+      }
+    ],
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/nmemo\" hook", "timeout": 60}]}
+    ],
+    "SubagentStop": [
+      {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/nmemo\" hook", "timeout": 60}]}
+    ],
+    "PreCompact": [
+      {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/nmemo\" hook", "timeout": 60}]}
+    ],
+    "SessionEnd": [
+      {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/nmemo\" hook", "timeout": 60}]}
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "nmemo",
+  "version": "0.1.0",
+  "description": "Local, lossless memory of every session: your messages, the AI's replies, the commands it ran and the full contents of files it wrote, searchable by the AI through MCP.",
+  "author": {
+    "name": "dalayhoailinh"
+  },
+  "repository": "https://github.com/dalayhoailinh/nmemo",
+  "keywords": ["memory", "history", "mcp", "sqlite", "vietnamese"],
+  "mcpServers": {
+    "nmemo": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/bin/nmemo", "mcp"]
+    }
+  }
+}
