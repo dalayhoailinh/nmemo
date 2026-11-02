@@ -27,6 +27,11 @@ def max_file_bytes() -> int:
     return int(float(os.environ.get("NMEMO_MAX_FILE_MB", "20")) * 1024 * 1024)
 
 
+def fs_path(path: str) -> str:
+    """The form of an absolute path to hand to the OS: Windows rejects 260+ chars without \\\\?\\."""
+    return "\\\\?\\" + path if os.name == "nt" and len(path) >= 260 and not path.startswith("\\\\") else path
+
+
 _PERSISTED = re.compile(r"Full output saved to: (.+?)[ \t]*(?:\r?\n|$)")
 
 
@@ -42,7 +47,7 @@ def persisted_output(text: str, transcript: str) -> str | None:
             inside = os.path.commonpath([full, os.path.abspath(base)]) == os.path.abspath(base)
         except ValueError:  # different drives on Windows
             inside = False
-        if inside and os.path.isfile(full):
+        if inside and os.path.isfile(fs_path(full)):
             return full
     return None
 
@@ -52,8 +57,9 @@ def ingest_transcript(store: Store, path: str | Path, *, agent: str | None = Non
     """Store every new complete line of a JSONL transcript and index its parts. Safe to call
     again and again: it continues from where the previous call stopped."""
     path = os.path.abspath(os.fspath(path))
+    disk_path = fs_path(path)
     totals = {"events": 0, "items": 0, "session": None}
-    if not os.path.isfile(path):
+    if not os.path.isfile(disk_path):
         return totals
     while True:
         with store.tx():
@@ -61,12 +67,12 @@ def ingest_transcript(store: Store, path: str | Path, *, agent: str | None = Non
             totals["session"] = sid
             src = store.source(path)
             offset, line_no = (src["offset"], src["lines"]) if src else (0, 0)
-            if os.path.getsize(path) < offset:  # rewritten from scratch: line numbers start over
+            if os.path.getsize(disk_path) < offset:  # rewritten from scratch: line numbers start over
                 offset, line_no = 0, 0
             last_ts = store.last_ts(sid)
             first_ts, title, fields = None, None, {}
             done = True
-            with open(path, "rb") as f:
+            with open(disk_path, "rb") as f:
                 f.seek(offset)
                 for count, raw in enumerate(f):
                     if count >= BATCH_LINES:
@@ -105,7 +111,7 @@ def ingest_transcript(store: Store, path: str | Path, *, agent: str | None = Non
                                        index=part.kind not in ("image", "context") and full is None)
                         totals["items"] += 1
                         if full:  # the transcript only kept a preview: store the whole output too
-                            with open(full, "rb") as f:
+                            with open(fs_path(full), "rb") as f:
                                 data = f.read()
                             text = decode_text(data)
                             store.add_item(session=sid, ts=ts, kind="tool_result", tool=tool, path=fpath,
@@ -155,8 +161,9 @@ def snapshot_file(store: Store, file_path: str, *, session: int, tool: str | Non
                   ref: str | None = None) -> int | None:
     """Store the full current content of a file (deduplicated); returns the new item id or None."""
     p = os.path.abspath(file_path)
+    disk_path = fs_path(p)
     try:
-        st = os.stat(p)
+        st = os.stat(disk_path)
     except OSError:
         return None
     if not stat.S_ISREG(st.st_mode):
@@ -166,7 +173,7 @@ def snapshot_file(store: Store, file_path: str, *, session: int, tool: str | Non
             return None
         return store.add_item(session=session, ts=time.time(), kind="file", tool=tool, path=p, ref=ref,
                               text=f"[không lưu nội dung: {st.st_size:,} byte, vượt NMEMO_MAX_FILE_MB]")
-    with open(p, "rb") as f:
+    with open(disk_path, "rb") as f:
         data = f.read()
     sha = store.put_blob(data)
     if store.last_file_blob(p) == sha:

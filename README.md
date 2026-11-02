@@ -149,7 +149,7 @@ python3 bin/nmemo profile
 
 ## Đã thử thật
 
-- 22 test tự động: `python3 -m unittest discover -s tests -v`.
+- 23 test tự động: `python3 -m unittest discover -s tests -v`.
 - Claude Code 2.1.316, chạy headless với `--plugin-dir`:
   - Phiên 1: "tạo hello.py rồi chạy". nmemo ghi đủ câu hỏi, lệnh `Write` kèm nội dung, bản chụp file,
     lệnh `python3 hello.py`, kết quả `xin chào nmemo`, câu trả lời cuối.
@@ -163,6 +163,26 @@ python3 bin/nmemo profile
     thích câu trả lời ngắn có id nguồn) và tra lại đúng việc cũ, nói rõ phần nào chỉ là suy ra.
 - Chính cuộc trò chuyện thiết kế nmemo (transcript 2.1 MB): sau nén còn 34% (phần lớn còn lại là chữ
   ký mã hóa ngẫu nhiên, không nén được); cả file SQLite kèm chỉ mục 1.1 MB; `verify` khớp 100%.
+
+## Windows
+
+Đã chạy trên Windows 11 với Python 3.13 bản Microsoft Store, Claude Code 2.1.282 (dòng lệnh) và
+2.1.309 (ứng dụng desktop): hook (qua Git Bash), MCP server, tự nhớ lại, nhập nền và tiêu hóa ngầm
+đều chạy, không bật cửa sổ console nào. Phép thử dùng Claude Code thật nhưng trỏ vào một API giả
+chạy ở máy, nên chưa có lượt tiêu hóa nào với model thật trên Windows.
+
+- Cần lệnh `python3` trong PATH (bản Microsoft Store có sẵn). Không có thì sửa lệnh trong
+  `hooks/hooks.json` và `.claude-plugin/plugin.json`.
+- Cài thẳng từ thư mục repo, không cần GitHub: `claude plugin marketplace add D:\đường\dẫn\nmemo`
+  rồi `claude plugin install nmemo@nmemo`. Hook và MCP chạy từ chính thư mục đó: sửa code thì phiên
+  sau dùng luôn, đổi nhánh git là đổi bản đang chạy, đừng xóa hay dời thư mục.
+- Quyền 600 không có tác dụng trên NTFS. `~/.nmemo` nằm trong thư mục người dùng nên mặc định chỉ
+  bạn, SYSTEM và Administrators đọc được.
+- `export` trong PowerShell 5.1: dấu `>` đổi mã hóa, file ra không còn đúng từng byte. Dùng
+  `cmd /c "python3 bin\nmemo export s3 > s3.jsonl"` hoặc Git Bash.
+- Windows từ chối đường dẫn từ 260 ký tự khi chưa bật `LongPathsEnabled`. nmemo tự thêm tiền tố
+  `\\?\` khi đọc transcript và chụp file, nên phiên ở thư mục rất sâu vẫn được lưu (riêng `import`
+  vẫn bỏ qua thư mục sâu quá giới hạn).
 
 ## Cowork
 
@@ -226,7 +246,6 @@ Lỗi của hook (nếu có) ghi vào `~/.nmemo/nmemo.log`; hook không bao gi�
 - Tìm theo ý nghĩa (vector): tự nhớ lại hiện dựa trên từ ngữ trùng nhau, nên câu hỏi diễn đạt rất khác
   với bản ghi có thể bị bỏ sót (AI vẫn tự `search` thêm được).
 - Tóm tắt theo tuần/tháng/năm cho lịch sử dài.
-- Windows: cần lệnh `python3` trong PATH, hoặc sửa lệnh trong `hooks/hooks.json` và `.claude-plugin/plugin.json`.
 
 Không công cụ nào lưu được **phần suy nghĩ ẩn** của AI: nhà cung cấp chỉ gửi ra bản tóm tắt hoặc để
 trống. nmemo lưu mọi thứ AI gửi ra: câu trả lời, dòng tiến độ, lệnh, kết quả, file.

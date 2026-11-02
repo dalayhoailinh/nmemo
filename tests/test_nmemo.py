@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -106,7 +107,7 @@ class IngestTests(Base):
         ingest.ingest_transcript(self.store, self.transcript)
         total, rows = self.store.search("hiem gap")
         self.assertEqual(total, 1)
-        self.assertEqual(self.store.item_text(rows[0]), full.read_text(encoding="utf-8"))
+        self.assertEqual(self.store.item_text(rows[0]), full.read_bytes().decode("utf-8"))
         self.assertEqual(self.store.search("rat dai")[0], 1)  # the 2 KB preview is not indexed twice
         self.assertEqual(self.store.one("SELECT count(*) FROM item WHERE blob IS NOT NULL")[0], 1)
 
@@ -119,6 +120,20 @@ class IngestTests(Base):
         self.assertEqual(r["events"], 3)  # raw lines kept for both files...
         self.assertEqual(r["items"], 1)   # ...but only the new message becomes searchable again
         self.assertEqual(self.store.one("SELECT count(*) FROM event WHERE dup_of IS NOT NULL")[0], 2)
+
+    def test_path_over_windows_limit(self):
+        deep = os.path.join(str(self.dir), "d" * 100, "e" * 100, "f" * 100)
+        transcript = os.path.join(deep, "sess-1.jsonl")
+        self.assertGreater(len(transcript), 260)
+        os.makedirs(ingest.fs_path(deep))
+        try:
+            with open(ingest.fs_path(transcript), "w", encoding="utf-8") as f:
+                f.write(user("u1", "phiên nằm ở đường dẫn rất dài"))
+            r = ingest.ingest_transcript(self.store, transcript)
+            self.assertEqual(r["events"], 1)
+            self.assertIsNotNone(ingest.snapshot_file(self.store, transcript, session=r["session"]))
+        finally:
+            shutil.rmtree(ingest.fs_path(deep))  # plain cleanup cannot reach paths this long
 
 
 class SearchTests(Base):
@@ -169,7 +184,7 @@ class HookTests(Base):
         tool = {"tool_name": "Write", "tool_use_id": "toolu_1", "tool_input": {"file_path": "a.py"}}
         hooks.handle(self.payload("PostToolUse", **tool), self.store)
         hooks.handle(self.payload("PostToolUse", **tool), self.store)  # unchanged: no new version
-        (proj / "made_by_shell.txt").write_text("kết quả\n")
+        (proj / "made_by_shell.txt").write_bytes("kết quả\n".encode("utf-8"))
         self.write(assistant("a1", [{"type": "text", "text": "Xong"}]))
         hooks.handle(self.payload("Stop", stop_hook_active=False), self.store)
         hooks.handle(self.payload("SessionEnd", reason="exit"), self.store)
