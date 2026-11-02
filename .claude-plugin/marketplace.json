@@ -1,0 +1,14 @@
+{
+  "name": "nmemo",
+  "description": "nmemo: your computer is the memory, any cloud AI is the brain.",
+  "owner": {
+    "name": "dalayhoailinh"
+  },
+  "plugins": [
+    {
+      "name": "nmemo",
+      "source": "./",
+      "description": "Local, lossless memory of every Claude Code session, searchable through MCP."
+    }
+  ]
+}
