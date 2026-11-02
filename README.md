@@ -1,0 +1,1 @@
+The project that your PC is memory and any cloud AI is the brain
