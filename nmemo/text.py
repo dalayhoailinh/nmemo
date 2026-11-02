@@ -61,6 +61,41 @@ def query_terms(query: str) -> list[str]:
     return [fold(w) for w in re.findall(r"\w+", nfc(query))]
 
 
+# Function words that say nothing about what a message is about (Vietnamese keeps its accents here:
+# folded, "ma" would also drop "mã" = code).
+STOPWORDS = frozenset("""
+là và của có không cho với này đó thì được cái gì nào để một những các đã sẽ đang lại nữa rồi thế
+như vậy ơi nhé nha ạ à ừ mình bạn tôi tớ ở ra vào lên khi nếu mà hay hoặc rằng từ trong trên sau
+trước rất quá cũng vẫn đều chỉ giúp hãy xin nhỉ vâng dạ thôi kia đây ấy nhưng vì nên bị
+a an and are as at be but by can could do does for from had has have how i if in into is it its me
+my no not of on or our please should so that the their them then there these they this to us was
+we were what when where which who why will with would you your
+""".split())
+
+
+def terms(text: str, limit: int = 16) -> list[str]:
+    """The distinct meaningful words of a message, in order of appearance."""
+    out, seen = [], set()
+    for word in re.findall(r"\w+", nfc(text[:4000]).lower()):
+        key = fold(word)
+        if len(word) < 2 or word in STOPWORDS or key in seen:
+            continue
+        seen.add(key)
+        out.append(word)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def fts_any(words: list[str]) -> str:
+    """FTS5 expression matching items that contain ANY of the words (with or without accents)."""
+    alts = []
+    for word in words:
+        exact, folded = word.replace('"', '""'), fold(word).replace('"', '""')
+        alts += [f'body : "{exact}"', f'folded : "{folded}"'] + ([f'body : "{folded}"'] if folded != exact else [])
+    return " OR ".join(alts)
+
+
 def compact(text: str) -> str:
     return " ".join(text.split())
 

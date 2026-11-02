@@ -20,6 +20,15 @@ command changed it. Nothing leaves the machine unless you read it through these 
 | `read` | Get exact content: `i<n>` an item, `e<n>` the raw transcript line byte-for-byte, `s<n>` a session overview; `around` adds neighbours |
 | `remember` | Save a durable note the user wants kept |
 
+## What you get without asking
+
+- At session start: `profile.md`, a short portrait of the user kept up to date from past sessions, plus
+  the latest sessions in this folder. Use it to understand who you are helping; do not recite it.
+- With each user message: up to 5 lines marked `[nmemo]` recalled from earlier sessions. They are
+  leads, not proof: `read` the id before relying on details.
+- Session digests (`kind: summary`) and facts about the user (`kind: fact`) are written in the
+  background after each session.
+
 ## How to work with it
 
 1. Go from broad to exact: `sessions` or `search` with a few words, then `read` only the ids you need.

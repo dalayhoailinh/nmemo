@@ -14,13 +14,17 @@ from . import __version__, views
 from . import text as T
 from .store import Store
 
-KINDS = ["user", "assistant", "tool_call", "tool_result", "file", "note", "thinking", "summary", "context", "image"]
+KINDS = ["user", "assistant", "tool_call", "tool_result", "file", "note", "fact", "summary", "profile",
+         "thinking", "context", "image"]
 
 INSTRUCTIONS = (
     "nmemo is the user's local, lossless memory of past AI sessions: their messages, your replies, the "
     "commands you ran, tool results, and full contents of files you created or edited. Use it whenever the "
-    "user refers to earlier work or asks what was said/done/decided before. Start with `sessions` or "
-    "`search`, then `read` the ids you need. Quote memory only from `read` output, and cite ids (i123)."
+    "user refers to earlier work or asks what was said/done/decided before. A profile of the user and "
+    "digests of past sessions (kind summary/fact) are kept up to date; each new user message already "
+    "comes with a few automatically recalled lines marked [nmemo]; use `search`/`read` to go further. "
+    "Start broad (`sessions`, `search`), then `read` the ids you need; `read` also shows pictures. "
+    "Quote memory only from `read` output, and cite ids (i123)."
 )
 
 _PAGE = {
@@ -96,6 +100,16 @@ def _session(value) -> int | None:
     return num
 
 
+def _required(args: dict, key: str) -> str:
+    """The required argument, or the only text argument given under another name (models slip)."""
+    if args.get(key) not in (None, ""):
+        return str(args[key])
+    texts = [v for k, v in args.items() if isinstance(v, str) and v and k not in ("query", "kind")]
+    if len(texts) == 1:
+        return texts[0]
+    raise ValueError(f"thiếu tham số '{key}'")
+
+
 def call(store: Store, name: str, args: dict) -> str:
     page = {"limit": int(args.get("limit", 10)), "offset": int(args.get("offset", 0))}
     if name == "search":
@@ -104,15 +118,15 @@ def call(store: Store, name: str, args: dict) -> str:
                             until=T.parse_day(args.get("until"), end=True), path=args.get("path"),
                             limit=min(page["limit"], 50), offset=page["offset"])
     if name == "read":
-        return views.read(store, args["id"], offset=int(args.get("offset", 0)),
+        return views.read(store, _required(args, "id"), offset=int(args.get("offset", 0)),
                           limit=int(args.get("limit", views.READ_LIMIT)), around=int(args.get("around", 0)))
     if name == "sessions":
         return views.sessions(store, query=args.get("query"), cwd=args.get("cwd"), **page)
     if name == "timeline":
-        return views.timeline(store, _session(args["session"]), kinds=args.get("kind") or None,
+        return views.timeline(store, _session(_required(args, "session")), kinds=args.get("kind") or None,
                               limit=int(args.get("limit", 50)), offset=page["offset"])
     if name == "remember":
-        text = str(args["text"]).strip()
+        text = _required(args, "text").strip()
         if not text:
             raise ValueError("text trống")
         with store.tx():
@@ -154,13 +168,19 @@ def serve(home: str | None = None) -> int:
         elif method == "tools/list":
             _reply(msg["id"], {"tools": TOOLS})
         elif method == "tools/call":
+            name, args = params.get("name"), params.get("arguments") or {}
             try:
-                text, is_error = call(store, params.get("name"), params.get("arguments") or {}), False
+                text, is_error = call(store, name, args), False
             except (KeyError, ValueError) as e:
                 text, is_error = f"Lỗi: {e}", True
             except Exception:
                 text, is_error = "Lỗi nội bộ nmemo:\n" + traceback.format_exc(limit=3), True
-            _reply(msg["id"], {"content": [{"type": "text", "text": text}], "isError": is_error})
+            content = [{"type": "text", "text": text}]
+            if name == "read" and not is_error:
+                image = views.image_payload(store, _required(args, "id"))
+                if image:  # let the model actually see a picture the user sent earlier
+                    content.append({"type": "image", "data": image[0], "mimeType": image[1]})
+            _reply(msg["id"], {"content": content, "isError": is_error})
         else:
             _reply(msg["id"], error={"code": -32601, "message": f"method not found: {method}"})
     store.close()

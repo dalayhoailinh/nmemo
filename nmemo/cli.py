@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from . import __version__, hooks, ingest, mcp, views
+from . import __version__, digest, hooks, ingest, mcp, views
 from . import text as T
 from .store import Store
 
@@ -67,6 +67,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("remember", help="lưu một ghi chú")
     p.add_argument("text")
 
+    p = sub.add_parser("digest", help="tóm tắt phiên + cập nhật hồ sơ (gọi `claude -p` với model rẻ)")
+    p.add_argument("--session", type=_session_arg, action="append", help="chỉ phiên này (lặp lại được)")
+    p.add_argument("--all", action="store_true", help="mọi phiên chưa tóm tắt, không chỉ 7 ngày gần đây")
+    p.add_argument("--auto", action="store_true", help="(hook gọi) chạy ngầm, ghi log vào nmemo.log")
+    p.add_argument("--limit", type=int, default=5)
+    p.add_argument("--dry-run", action="store_true", help="chỉ in tài liệu sẽ gửi cho model")
+
+    sub.add_parser("profile", help="xem hồ sơ người dùng hiện tại")
     sub.add_parser("stats", help="thống kê kho và tỉ lệ nén")
     sub.add_parser("verify", help="kiểm tra SHA-256 toàn bộ dữ liệu gốc")
     sub.add_parser("compact", help="nén nốt các dòng đang chờ thành khung")
@@ -91,6 +99,8 @@ def main(argv=None) -> int:
     except (KeyError, ValueError) as e:
         print(f"Lỗi: {e}", file=sys.stderr)
         return 1
+    except BrokenPipeError:  # output piped into `head` and closed early
+        return 0
     finally:
         store.close()
 
@@ -115,6 +125,25 @@ def run(store: Store, args) -> int:
         out = sys.stdout.buffer
         for line in store.session_lines(args.session):
             out.write(line + b"\n")
+    elif args.cmd == "digest":
+        sessions = args.session or digest.pending(store, days=None if args.all else 7,
+                                                  limit=10_000 if args.all else args.limit)
+        if args.dry_run:
+            for sid in sessions:
+                print(digest.material(store, sid) + "\n")
+            return 0
+        log = (lambda m: hooks.log("digest: " + m, str(store.home))) if args.auto else print
+        with digest.Lock(store.home) as lock:
+            if not lock.held:
+                log("một lượt tóm tắt khác đang chạy")
+                return 0
+            if not sessions:
+                log("không có phiên nào cần tóm tắt")
+            else:
+                result = digest.run(store, sessions, log=log)
+                log(f"xong: {len(result['digests'])} bản tóm tắt, chi phí ~{result['cost_usd']} USD")
+    elif args.cmd == "profile":
+        print(digest.current_profile(store) or "Chưa có hồ sơ. Chạy `nmemo digest` sau vài phiên làm việc.")
     elif args.cmd == "remember":
         print(mcp.call(store, "remember", {"text": args.text}))
     elif args.cmd == "stats":

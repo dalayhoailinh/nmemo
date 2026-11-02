@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import math
+import os
 import re
 
 from . import text as T
@@ -155,12 +158,15 @@ def session_overview(store: Store, sid: int) -> str:
     prompts = store.db.execute(
         "SELECT id, preview FROM item WHERE session=? AND kind='user' ORDER BY ts, id LIMIT 8", (sid,)).fetchall()
     subs = store.db.execute("SELECT id, agent FROM session WHERE parent=?", (sid,)).fetchall()
+    digest = store.one("SELECT * FROM item WHERE session=? AND kind='summary' AND tool='digest' ORDER BY id DESC LIMIT 1", sid)
     lines = [
         f"[s{sid}] {s['title'] or ''}",
         f"thư mục: {s['cwd']} · nhánh git: {s['branch']} · {T.fmt_ts(s['started'])} → {T.fmt_ts(s['ended'])}",
         f"transcript gốc: {s['key']}",
         "đếm: " + ", ".join(f"{k} {n}" for k, n in counts),
     ]
+    if digest:
+        lines.append(f"tóm tắt (i{digest['id']}):\n" + store.item_text(digest))
     if subs:
         lines.append("subagent: " + ", ".join(f"s{r['id']} ({r['agent']})" for r in subs))
     if files:
@@ -169,6 +175,113 @@ def session_overview(store: Store, sid: int) -> str:
     lines += [f"  [i{r['id']}] {r['preview'][:150]}" for r in prompts]
     lines.append(f"Toàn bộ diễn biến: timeline({sid}).")
     return "\n".join(lines)
+
+
+RECALL_KINDS = ("user", "assistant", "thinking", "tool_call", "file", "note", "fact", "summary")
+DISTILLED = ("summary", "fact", "note")  # understanding beats raw fragments when both match
+IMAGE_LIMIT = 5 * 1024 * 1024
+
+
+def recall(store: Store, prompt: str, *, exclude_session=None, skip=(), budget: int = 1500,
+           max_hits: int = 5) -> tuple[str, list[int]]:
+    """Memories from earlier sessions that share enough meaningful words with a new message.
+
+    Words that occur in a large share of all items say little, so they are ignored; an item must
+    contain at least ~30% of the remaining words (at least 2, at most 4) to be shown."""
+    total = store.one("SELECT count(*) FROM item")[0] or 1
+    common = max(50, 0.15 * total)
+    freq = {w: store.doc_freq(w) for w in T.terms(prompt)}
+    words = [w for w, df in freq.items() if df <= common]
+    if not words or (len(words) == 1 and (len(words[0]) < 4 or freq[words[0]] > 20)):
+        return "", []
+    need = 1 if len(words) == 1 else min(4, max(2, math.ceil(0.3 * len(words))))
+    wanted = {T.fold(w) for w in words}
+    picked = []
+    for row in store.search_any(words, kinds=RECALL_KINDS, exclude_session=exclude_session):
+        if row["id"] in skip:
+            continue
+        text = row["preview"] or ""
+        if row["size"] > len(text):
+            text = store.item_text(row)[:50_000]
+        found = set(re.findall(r"\w+", T.fold(" ".join(x for x in (row["tool"], row["path"], text) if x))))
+        hits = len(wanted & found)
+        if hits >= need:
+            rank = hits + (1 if row["kind"] in DISTILLED else 0)
+            picked.append((-rank, row["score"], -(row["ts"] or 0), row["id"], row, text))
+    picked.sort(key=lambda p: p[:4])
+    lines, ids, per_session, used = [], [], {}, 0
+    for *_, row, text in picked:
+        if len(lines) >= max_hits:
+            break
+        if per_session.get(row["session"], 0) >= 3:
+            continue
+        label = " ".join(x for x in (row["kind"], row["tool"], row["path"]) if x)
+        sess = f"s{row['session']} " if row["session"] else ""
+        line = f"[i{row['id']}] {T.fmt_ts(row['ts'])} {sess}{label}: {T.snippet(_shown(row, text), ' '.join(words), 180)}"
+        if used + len(line) > budget:
+            break
+        lines.append(line)
+        ids.append(row["id"])
+        used += len(line)
+        per_session[row["session"]] = per_session.get(row["session"], 0) + 1
+    if not lines:
+        return "", []
+    for sid in list(per_session)[:3]:  # what those sessions produced is often what the user means
+        files = _session_files(store, sid)
+        if sid and files:
+            lines.append(f"  file của s{sid}: " + ", ".join(f"{p} (i{i})" for p, i in files))
+    head = ("[nmemo] Tự tìm trong bộ nhớ theo tin nhắn này; có thể liên quan "
+            "(xem nguyên văn: read(id), tìm thêm: search):")
+    return head + "\n" + "\n".join(lines), ids
+
+
+def _session_files(store: Store, sid, limit: int = 4) -> list[tuple[str, int]]:
+    """Latest files a session wrote: snapshots if hooks ran, else the paths of its Write/Edit calls."""
+    rows = store.db.execute(
+        "SELECT path, max(id) FROM item WHERE session=? AND kind='file' GROUP BY path ORDER BY max(id) DESC LIMIT ?",
+        (sid, limit)).fetchall()
+    if not rows:
+        rows = store.db.execute(
+            "SELECT path, max(id) FROM item WHERE session=? AND kind='tool_call' AND path IS NOT NULL"
+            " AND tool IN ('Write','Edit','MultiEdit','NotebookEdit') GROUP BY path ORDER BY max(id) DESC LIMIT ?",
+            (sid, limit)).fetchall()
+    return [(r[0], r[1]) for r in rows]
+
+
+def _sniff_image(data: bytes) -> str | None:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def image_payload(store: Store, ident: str) -> tuple[str, str] | None:
+    """(base64, media type) when an item is a picture: one the user sent, or an image file."""
+    try:
+        kind, num = parse_id(ident)
+    except ValueError:
+        return None
+    row = store.item(num) if kind == "i" else None
+    if row is None:
+        return None
+    if row["kind"] == "image" and row["event"] and (row["ptr"] or "")[1:].isdigit():
+        content = ((store.event_obj(row["event"]) or {}).get("message") or {}).get("content")
+        idx = int(row["ptr"][1:])
+        block = content[idx] if isinstance(content, list) and idx < len(content) else {}
+        src = block.get("source") if isinstance(block, dict) else None
+        if isinstance(src, dict) and src.get("type") == "base64" and src.get("data"):
+            return src["data"], src.get("media_type") or "image/png"
+    if row["blob"] is not None:
+        data = store.get_blob(row["blob"])
+        media = _sniff_image(data)
+        if media and len(data) <= IMAGE_LIMIT:
+            return base64.b64encode(data).decode("ascii"), media
+    return None
 
 
 def start_context(store: Store, payload: dict) -> str:
@@ -185,6 +298,13 @@ def start_context(store: Store, payload: dict) -> str:
         where = "gần đây"
     lines = ["[nmemo] Bộ nhớ cục bộ đang lưu nguyên văn phiên này: tin nhắn, câu trả lời, lệnh đã chạy, "
              "nội dung file đã tạo/sửa" + (f" (phiên hiện tại: s{current_id})." if current_id else ".")]
+    profile_path = store.home / "profile.md"
+    if profile_path.exists():
+        limit = int(os.environ.get("NMEMO_PROFILE_CHARS", "2500"))
+        profile = profile_path.read_text(encoding="utf-8").strip()
+        if profile:
+            cut = profile[:limit] + ("\n…" if len(profile) > limit else "")
+            lines.append("Hồ sơ người dùng (tự cập nhật sau mỗi phiên; người dùng có thể sửa profile.md):\n" + cut)
     if rows:
         lines.append(f"Phiên trước {where}:")
         lines += ["- " + session_line(r) for r in rows]

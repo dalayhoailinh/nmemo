@@ -27,7 +27,7 @@ from . import text as T
 FRAME_TARGET = 64 * 1024
 INDEX_CHARS = 300_000
 PREVIEW_CHARS = 240
-HIDDEN_KINDS = ("context", "image")
+HIDDEN_KINDS = ("context", "image", "summary_old", "fact_old", "profile_old")
 
 CODECS = {
     "raw": (lambda b: b, lambda b: b),
@@ -63,6 +63,7 @@ CREATE INDEX IF NOT EXISTS item_path ON item(path) WHERE path IS NOT NULL;
 CREATE INDEX IF NOT EXISTS item_ref ON item(ref) WHERE ref IS NOT NULL;
 CREATE VIRTUAL TABLE IF NOT EXISTS item_fts USING fts5(
   body, folded, content='', tokenize='unicode61 remove_diacritics 0');
+CREATE VIRTUAL TABLE IF NOT EXISTS item_vocab USING fts5vocab('item_fts', 'row');
 """
 
 
@@ -371,6 +372,26 @@ class Store:
         total = self.one(f"SELECT count(*) {base}", *args)[0]
         rows = self.db.execute(f"SELECT item.* {base} {order} LIMIT ? OFFSET ?", (*args, limit, offset)).fetchall()
         return total, rows
+
+    def search_any(self, words, *, kinds, exclude_session=None, limit: int = 40):
+        """Items containing any of the words, best BM25 first (for automatic recall)."""
+        fts = T.fts_any(words)
+        if not fts:
+            return []
+        return self.db.execute(
+            f"""SELECT item.*, bm25(item_fts, 3.0, 1.0) AS score
+                FROM item_fts JOIN item ON item.id = item_fts.rowid
+                WHERE item_fts MATCH ? AND item.kind IN ({','.join('?' * len(kinds))})
+                  AND coalesce(item.session, -1) != ?
+                ORDER BY score LIMIT ?""",
+            (fts, *kinds, -1 if exclude_session is None else exclude_session, limit)).fetchall()
+
+    def doc_freq(self, word: str) -> int:
+        """In how many indexed items a word occurs (accented or folded form, whichever is larger)."""
+        forms = {word, T.fold(word)}
+        rows = self.db.execute(f"SELECT max(doc) FROM item_vocab WHERE term IN ({','.join('?' * len(forms))})",
+                               tuple(forms)).fetchone()
+        return rows[0] or 0
 
     def timeline(self, session: int, *, kinds=None, limit: int = 50, offset: int = 0):
         kinds = kinds or ("user", "assistant", "tool_call", "file", "note", "summary")

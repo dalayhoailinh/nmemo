@@ -283,11 +283,11 @@ toàn bộ vào kho trước khi Claude Code tự xóa transcript cũ (mặc đ�
 | Hook | nmemo làm gì |
 |---|---|
 | `SessionStart` | Nạp phần đã có; lần đầu thì nhập nền mọi transcript cũ; chèn vài dòng "các phiên trước ở thư mục này" vào ngữ cảnh |
-| `UserPromptSubmit` | Ghi giờ bắt đầu lượt |
+| `UserPromptSubmit` | **Tự nhớ lại**: tìm trong kho theo tin nhắn mới, đưa cho AI tối đa 5 dòng liên quan từ các phiên trước (ưu tiên tóm tắt và sự thật, bỏ từ quá phổ biến, không lặp lại trong một phiên); ghi giờ bắt đầu lượt |
 | `PostToolUse` (Write, Edit, MultiEdit, NotebookEdit) | Chụp nội dung đầy đủ của file ngay sau khi AI sửa |
 | `Stop` | Nạp các dòng mới của lượt (câu hỏi, câu trả lời, lệnh, kết quả); chụp thêm file mà lệnh shell đã đổi trong lượt |
 | `SubagentStop` | Nạp transcript riêng của subagent, gắn vào phiên cha |
-| `PreCompact`, `SessionEnd` | Nạp nốt, nén các dòng còn chờ thành khung |
+| `PreCompact`, `SessionEnd` | Nạp nốt, nén các dòng còn chờ thành khung; `SessionEnd` còn khởi động **tiêu hóa ngầm**: model rẻ (qua `claude -p`, không công cụ, không lưu phiên) viết tóm tắt phiên + sự thật về người dùng, rồi cập nhật `profile.md`, file được đưa vào đầu mỗi phiên sau |
 
 Mỗi dòng transcript lưu đúng từng byte (SHA-256, xuất lại được y hệt file gốc); các mục tìm kiếm chỉ
 là con trỏ vào dòng gốc, nên đọc ra luôn là nguyên văn. Đã chạy thử với Claude Code thật: ở một phiên
@@ -426,7 +426,7 @@ Mẹo tiết kiệm, xếp theo hiệu quả:
 | Bước | Làm gì | Dùng được gì |
 |---|---|---|
 | 1 | Nhập 1 nguồn chat + 1 cuốn sách → `raw/` + SQLite FTS5; MCP server với `search`, `read`; nối Claude Desktop hoặc Claude Code; 20 câu hỏi kiểm thử đầu tiên. **Đã làm cho nguồn đầu tiên: phiên Claude Code (nmemo 0.1).** Còn: chat từ nơi khác, sách | Tìm lại tin cũ; "đọc trang 678" chính xác |
-| 2 | Cắt episode, tiêu hóa bằng Batch API; bảng `fact`; `profile.md` đầu tiên | AI trả lời có ngữ cảnh về bạn |
+| 2 | Cắt episode, tiêu hóa bằng Batch API; bảng `fact`; `profile.md` đầu tiên. **Đã làm bản đầu cho phiên Claude Code: tóm tắt mỗi phiên, sự thật, hồ sơ, tự nhớ lại theo từng tin nhắn (nmemo 0.1).** | AI trả lời có ngữ cảnh về bạn |
 | 3 | Luồng thời gian thực: `inbox/`, đóng khung, `remember`, tiêu hóa cuối phiên / mỗi đêm | Bộ nhớ tự lớn lên mỗi ngày |
 | 4 | Cuộn tóm tắt ngày → năm, thẻ thực thể, dòng thời gian, suy ngẫm có bằng chứng; giao diện duyệt/sửa sự thật | "Năm ngoái mình thế nào?"; AI hiểu mẫu hành vi |
 | 5 | Mở rộng bộ kiểm thử; đo độ sót và chi phí; tinh chỉnh ngân sách token | Biết chắc hệ thống tốt đến đâu |
