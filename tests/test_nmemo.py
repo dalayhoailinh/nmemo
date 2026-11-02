@@ -87,6 +87,25 @@ class IngestTests(Base):
         row = self.store.one("SELECT * FROM item WHERE kind='tool_call'")
         self.assertIn(WRITE["input"]["content"], self.store.item_text(row))
 
+    def test_long_tool_output_saved_beside_transcript(self):
+        full = self.dir / "sess-1" / "tool-results" / "abc.txt"
+        full.parent.mkdir(parents=True)
+        full.write_text("đầu ra rất dài\n" * 3000 + "dòng cuối cùng hiếm gặp\n", encoding="utf-8")
+        outside = self.dir.parent / "secret.txt"
+        preview = (f"<persisted-output>\nOutput too large (42.9KB). Full output saved to: {full}\n\n"
+                   "Preview (first 2KB):\nđầu ra rất dài\n")
+        bogus = f"Full output saved to: {outside}\n"
+        self.write(assistant("a1", [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "x"}}]),
+                   line(type="user", uuid="u2", timestamp="2026-11-02T01:00:02Z", message={"role": "user", "content": [
+                       {"type": "tool_result", "tool_use_id": "t1", "content": preview},
+                       {"type": "tool_result", "tool_use_id": "t1", "content": bogus}]}))
+        ingest.ingest_transcript(self.store, self.transcript)
+        total, rows = self.store.search("hiem gap")
+        self.assertEqual(total, 1)
+        self.assertEqual(self.store.item_text(rows[0]), full.read_text(encoding="utf-8"))
+        self.assertEqual(self.store.search("rat dai")[0], 1)  # the 2 KB preview is not indexed twice
+        self.assertEqual(self.store.one("SELECT count(*) FROM item WHERE blob IS NOT NULL")[0], 1)
+
     def test_resumed_copy_is_not_indexed_twice(self):
         self.write(user("u1", "câu hỏi gốc"), assistant("a1", [{"type": "text", "text": "trả lời"}]))
         ingest.ingest_transcript(self.store, self.transcript)

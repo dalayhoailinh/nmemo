@@ -19,7 +19,8 @@ Mỗi lượt hỏi–đáp, hook của plugin tự ghi vào `~/.nmemo/nmemo.db`
 | Mọi lệnh AI chạy, với đầu vào đầy đủ | `$ python3 hello.py`, `Write hello.py` + toàn bộ nội dung, `Edit` + đoạn cũ/mới |
 | Kết quả trả về của từng lệnh | `xin chào nmemo` |
 | Nội dung file sau mỗi lần AI tạo/sửa | mỗi phiên bản lưu đủ, trùng nội dung thì lưu một lần |
-| File do lệnh shell tạo/sửa trong lượt đó | `output.csv` sinh ra từ một script |
+| File do lệnh shell tạo/sửa trong thư mục làm việc, trong lượt đó | `output.csv` sinh ra từ một script |
+| Kết quả rất dài mà Claude Code cất ra file riêng | lưu đủ, không chỉ 2 KB xem trước |
 | Phiên của subagent | gắn với phiên cha |
 
 Mỗi dòng transcript gốc được giữ **đúng từng byte** kèm SHA-256 (`nmemo export` xuất lại y hệt file
@@ -36,6 +37,15 @@ AI tra lại qua MCP server `nmemo` với 5 công cụ:
 | `remember` | Lưu một ghi chú bền vững |
 
 Đầu mỗi phiên, AI được nhắc ngắn (vài dòng) các phiên gần nhất ở cùng thư mục.
+
+## Có tốn token không?
+
+- **Ghi: 0 token.** Claude Code vốn đã ghi mỗi phiên ra file trên máy; hook của nmemo chép và nén file
+  đó bằng CPU của máy bạn. AI không đọc lại, không xử lý lại, không gửi lại gì để lưu.
+- **Chi phí cố định: khoảng 400 token mỗi phiên** (vài dòng nhắc đầu phiên, mô tả skill và MCP server),
+  so với khoảng 25 nghìn token Claude Code tự gửi mỗi lượt, và phần này được cache. Định nghĩa đầy đủ
+  của 5 công cụ chỉ được nạp khi AI thật sự cần tra.
+- **Đọc: chỉ khi cần, và chỉ đoạn cần.** Một lần tìm trả về vài dòng; đọc một mục tốn đúng độ dài mục đó.
 
 ## Cài đặt
 
@@ -108,7 +118,7 @@ python3 bin/nmemo verify
 
 ## Đã thử thật
 
-- 12 test tự động: `python3 -m unittest discover -s tests -v`.
+- 13 test tự động: `python3 -m unittest discover -s tests -v`.
 - Claude Code 2.1.316, chạy headless với `--plugin-dir`:
   - Phiên 1: "tạo hello.py rồi chạy". nmemo ghi đủ câu hỏi, lệnh `Write` kèm nội dung, bản chụp file,
     lệnh `python3 hello.py`, kết quả `xin chào nmemo`, câu trả lời cuối.
@@ -162,10 +172,16 @@ Lỗi của hook (nếu có) ghi vào `~/.nmemo/nmemo.log`; hook không bao gi�
 | `bench/compress_bench.py` | Đo nén trên dữ liệu của bạn |
 | `docs/kien-truc.md` | Thiết kế đầy đủ |
 
-## Chưa có (bước tiếp)
+## Chưa gom được (bước tiếp)
 
-- Tầng tóm tắt và "sự thật" (episode, fact, hồ sơ) trong thiết kế — bản này mới có tầng 0 (bản gốc)
-  và chỉ mục full-text.
-- Tìm theo ý nghĩa (vector).
-- Nguồn khác ngoài Claude Code: Messenger, Zalo, sách PDF.
+- Chat với AI ở nơi khác: app/web Claude, ChatGPT, Gemini. Các dịch vụ này không cho gắn hook, nên
+  phải nhập từ file xuất dữ liệu (export) của từng nơi.
+- Chat với người: Messenger, Telegram, Zalo, email.
+- File trong máy mà AI không đụng tới: tài liệu, sách PDF, ảnh, video, ghi âm. Cần thêm bộ theo dõi thư mục.
+- File mà lệnh shell tạo ra ngoài thư mục làm việc (ví dụ `/tmp`). File AI ghi bằng Write/Edit thì nằm
+  ở đâu cũng được lưu.
+- Tầng tóm tắt, "sự thật", hồ sơ về bạn trong thiết kế; tìm theo ý nghĩa (vector).
 - Windows: cần lệnh `python3` trong PATH, hoặc sửa lệnh trong `hooks/hooks.json` và `.claude-plugin/plugin.json`.
+
+Không công cụ nào lưu được **phần suy nghĩ ẩn** của AI: nhà cung cấp chỉ gửi ra bản tóm tắt hoặc để
+trống. nmemo lưu mọi thứ AI gửi ra: câu trả lời, dòng tiến độ, lệnh, kết quả, file.

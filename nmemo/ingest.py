@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import time
 from pathlib import Path
@@ -24,6 +25,26 @@ def claude_projects_dir() -> Path:
 
 def max_file_bytes() -> int:
     return int(float(os.environ.get("NMEMO_MAX_FILE_MB", "20")) * 1024 * 1024)
+
+
+_PERSISTED = re.compile(r"Full output saved to: (.+?)[ \t]*(?:\r?\n|$)")
+
+
+def persisted_output(text: str, transcript: str) -> str | None:
+    """Claude Code moves very long tool output to <session>/tool-results/*.txt and keeps only a
+    preview in the transcript. Return that file when it exists inside Claude's own folders."""
+    m = _PERSISTED.search(text[:4000])
+    if not m:
+        return None
+    full = os.path.abspath(m.group(1).strip())
+    for base in (os.path.dirname(transcript), str(claude_projects_dir())):
+        try:
+            inside = os.path.commonpath([full, os.path.abspath(base)]) == os.path.abspath(base)
+        except ValueError:  # different drives on Windows
+            inside = False
+        if inside and os.path.isfile(full):
+            return full
+    return None
 
 
 def ingest_transcript(store: Store, path: str | Path, *, agent: str | None = None,
@@ -73,13 +94,24 @@ def ingest_transcript(store: Store, path: str | Path, *, agent: str | None = Non
                         continue  # same message already indexed (e.g. history copied into a resumed session)
                     for part in claude.parts(obj):
                         tool, fpath = part.tool, part.path
-                        if part.kind == "tool_result" and part.ref:
-                            call = store.call_for_ref(part.ref)
-                            tool, fpath = (call["tool"], call["path"]) if call else (None, None)
+                        full = None
+                        if part.kind == "tool_result":
+                            if part.ref:
+                                call = store.call_for_ref(part.ref)
+                                tool, fpath = (call["tool"], call["path"]) if call else (None, None)
+                            full = persisted_output(part.text, path)
                         store.add_item(session=sid, ts=ts, kind=part.kind, text=part.text, tool=tool, path=fpath,
                                        event=eid, ptr=part.ptr, ref=part.ref,
-                                       index=part.kind not in ("image", "context"))
+                                       index=part.kind not in ("image", "context") and full is None)
                         totals["items"] += 1
+                        if full:  # the transcript only kept a preview: store the whole output too
+                            with open(full, "rb") as f:
+                                data = f.read()
+                            text = decode_text(data)
+                            store.add_item(session=sid, ts=ts, kind="tool_result", tool=tool, path=fpath,
+                                           blob=store.put_blob(data), ref=part.ref,
+                                           text=text if text is not None else f"[nhị phân {len(data):,} byte]")
+                            totals["items"] += 1
                         if title is None and claude.is_human_prompt(part):
                             title = T.compact(part.text)[:120]
             if agent:
